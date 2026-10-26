@@ -946,24 +946,55 @@
         });
     });
 
-    /* ========= MATCHES API ========= */
-    const API_URL = 'https://flyembed.cfd/api/matches.json';
+    /* ========= MATCHES API (with CORS proxy fallback) ========= */
+    const RAW_API = 'https://flyembed.cfd/api/matches.json';
+    const PROXIES = [
+        'https://api.allorigins.win/raw?url=',
+        'https://corsproxy.io/?',
+        'https://api.codetabs.com/v1/proxy/?quest='
+    ];
+
     let allMatches = [];
     let currentFilter = 'all';
 
+    async function tryFetch(url) {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const text = await res.text();
+        const data = JSON.parse(text);
+        if (!Array.isArray(data) || data.length === 0) throw new Error('Empty or invalid data');
+        return data;
+    }
+
     async function fetchMatches() {
+        // 1) Try direct fetch first
         try {
-            const res = await fetch(API_URL, { cache: 'no-store' });
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const data = await res.json();
-            allMatches = Array.isArray(data) ? data : [];
+            const data = await tryFetch(RAW_API);
+            allMatches = data;
             buildFilters(allMatches);
             renderMatches(allMatches, currentFilter);
-        } catch (err) {
-            console.error('Matches fetch error:', err);
-            document.getElementById('matchesContainer').innerHTML =
-                '<div class="no-matches">⚠️ No se pudieron cargar los partidos. Por favor, recarga la página.</div>';
+            return;
+        } catch (e1) {
+            console.warn('Direct fetch failed, trying proxy...', e1.message);
         }
+
+        // 2) Try proxies one by one
+        for (let i = 0; i < PROXIES.length; i++) {
+            try {
+                const url = PROXIES[i] + encodeURIComponent(RAW_API);
+                const data = await tryFetch(url);
+                allMatches = data;
+                buildFilters(allMatches);
+                renderMatches(allMatches, currentFilter);
+                return;
+            } catch (e2) {
+                console.warn('Proxy #' + (i+1) + ' failed:', e2.message);
+            }
+        }
+
+        // 3) All failed
+        document.getElementById('matchesContainer').innerHTML =
+            '<div class="no-matches">⚠️ No se pudieron cargar los partidos. Por favor, recarga la página.</div>';
     }
 
     function buildFilters(matches) {
