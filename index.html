@@ -946,28 +946,32 @@
         });
     });
 
-    /* ========= MATCHES API (with CORS proxy fallback) ========= */
+    /* ========= MATCHES API (via cors.lol proxy) ========= */
     const RAW_API = 'https://flyembed.cfd/api/matches.json';
-    const PROXIES = [
-        'https://api.allorigins.win/raw?url=',
-        'https://corsproxy.io/?',
-        'https://api.codetabs.com/v1/proxy/?quest='
-    ];
+    const PROXY = 'https://api.cors.lol/?url=';
 
     let allMatches = [];
     let currentFilter = 'all';
 
     async function tryFetch(url) {
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const text = await res.text();
-        const data = JSON.parse(text);
-        if (!Array.isArray(data) || data.length === 0) throw new Error('Empty or invalid data');
-        return data;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+            const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
+            clearTimeout(timeout);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const text = await res.text();
+            const data = JSON.parse(text);
+            if (!Array.isArray(data) || data.length === 0) throw new Error('Empty or invalid data');
+            return data;
+        } catch (e) {
+            clearTimeout(timeout);
+            throw e;
+        }
     }
 
     async function fetchMatches() {
-        // 1) Try direct fetch first
+        // 1) Try direct first
         try {
             const data = await tryFetch(RAW_API);
             allMatches = data;
@@ -975,21 +979,18 @@
             renderMatches(allMatches, currentFilter);
             return;
         } catch (e1) {
-            console.warn('Direct fetch failed, trying proxy...', e1.message);
+            console.warn('Direct failed:', e1.message);
         }
 
-        // 2) Try proxies one by one
-        for (let i = 0; i < PROXIES.length; i++) {
-            try {
-                const url = PROXIES[i] + encodeURIComponent(RAW_API);
-                const data = await tryFetch(url);
-                allMatches = data;
-                buildFilters(allMatches);
-                renderMatches(allMatches, currentFilter);
-                return;
-            } catch (e2) {
-                console.warn('Proxy #' + (i+1) + ' failed:', e2.message);
-            }
+        // 2) Try cors.lol proxy
+        try {
+            const data = await tryFetch(PROXY + encodeURIComponent(RAW_API));
+            allMatches = data;
+            buildFilters(allMatches);
+            renderMatches(allMatches, currentFilter);
+            return;
+        } catch (e2) {
+            console.warn('cors.lol failed:', e2.message);
         }
 
         // 3) All failed
@@ -1063,7 +1064,6 @@
         const time = escapeHtml(m.MatchStartTime || '--:--');
         const league = escapeHtml(m.League || '');
 
-        // Build watch1.html URL with match info as query params
         const watchUrl = 'watch1.html'
             + '?team1=' + encodeURIComponent(m.Team1 || '')
             + '&team2=' + encodeURIComponent(m.Team2 || '')
